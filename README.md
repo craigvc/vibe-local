@@ -36,7 +36,7 @@ Local voice-to-text with AI-powered text cleanup. A privacy-focused alternative 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/vibe-local.git
+git clone https://github.com/craigvc/vibe-local.git
 cd vibe-local
 
 # Create virtual environment
