@@ -108,9 +108,34 @@ python -m vibe_local.main
 
 | Action | Default Hotkey | Description |
 |--------|----------------|-------------|
-| Voice-to-text | Ctrl+Shift (hold) | Speak while holding, releases types the text |
+| Voice-to-text | Ctrl+Shift (hold) | Speak while holding, release to type the text |
 | Rewrite | Super+Shift+R (hold) | Select text first, then speak how to rewrite it |
 | Context Reply | Super+Shift+C (hold) | Copy conversation to clipboard, then speak your intent |
+
+### Platform-Specific Hotkey Recommendations
+
+The default hotkeys are configured for Linux. On other platforms, you may want to adjust them:
+
+**Windows** - Defaults should work well. Win+Shift+R/C are available.
+
+**macOS** - Command (⌘) is mapped to `KEY_LEFTMETA`. You may prefer using Control instead:
+
+```yaml
+hotkeys:
+  transcribe: ["KEY_LEFTCTRL", "KEY_LEFTSHIFT"]
+  rewrite: ["KEY_LEFTCTRL", "KEY_LEFTSHIFT", "KEY_R"]
+  context_reply: ["KEY_LEFTCTRL", "KEY_LEFTSHIFT", "KEY_C"]
+```
+
+**Key name reference:**
+
+| Key | Config Name |
+|-----|-------------|
+| Control/Ctrl | KEY_LEFTCTRL |
+| Shift | KEY_LEFTSHIFT |
+| Alt/Option | KEY_LEFTALT |
+| Super/Win/Command | KEY_LEFTMETA |
+| Any letter | KEY_X (e.g., KEY_R, KEY_C) |
 
 ### Running as a Service (Linux)
 
