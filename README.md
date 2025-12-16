@@ -2,6 +2,8 @@
 
 Local voice-to-text with AI-powered text cleanup. A privacy-focused alternative to cloud-based voice typing services.
 
+> **Looking for Testers!** This project has been developed and tested on Linux only. If you're on **Windows** or **macOS** and would like to help test, please give it a try and [open an issue](../../issues) with any problems you encounter. Your feedback is greatly appreciated!
+
 ## Features
 
 - **Voice-to-text**: Hold a hotkey, speak, release to type transcribed text
