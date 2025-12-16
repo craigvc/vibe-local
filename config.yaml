@@ -1,0 +1,39 @@
+# Vibe Local Configuration
+
+# Hotkeys (evdev key names)
+# Hold the hotkey to record, release to process
+hotkeys:
+  # Voice-to-text: speak and it types (Control+Shift)
+  transcribe: ["KEY_LEFTCTRL", "KEY_LEFTSHIFT"]
+  # Rewrite: select text first, then speak how you want it rewritten
+  rewrite: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_R"]
+  # Context reply: copy conversation to clipboard, then speak your intent
+  context_reply: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_C"]
+
+# Whisper settings for speech-to-text
+whisper:
+  # Model size: tiny, base, small, medium, large-v3
+  # Larger = more accurate but slower. medium is a good balance.
+  model: "medium"
+  # Language code (en, es, fr, de, etc.) or "auto" for detection
+  language: "en"
+  # Device: cuda (GPU) or cpu
+  device: "cuda"
+  # Compute type: float16 (fast), int8 (faster, slightly less accurate)
+  compute_type: "float16"
+
+# Ollama settings for AI features
+ollama:
+  model: "llama3.2"
+  base_url: "http://localhost:11434"
+
+# Writing style for AI responses
+# Options: formal, casual, very_casual
+style: "casual"
+
+# Audio settings
+audio:
+  # Sample rate in Hz
+  sample_rate: 16000
+  # Channels (1 = mono, which Whisper expects)
+  channels: 1
