@@ -105,7 +105,7 @@ Reply:"""
 
 def improve_transcription(text: str) -> str:
     """
-    Optionally improve/clean up a transcription.
+    Clean up a transcription.
 
     Args:
         text: Raw transcribed text
@@ -115,23 +115,18 @@ def improve_transcription(text: str) -> str:
     """
     client = _get_client()
 
-    prompt = f"""Fix any obvious transcription errors, add proper punctuation and capitalization.
-Keep the meaning exactly the same. Only output the corrected text, nothing else.
-
-Text: {text}
-
-Corrected:"""
-
-    response = client.generate(
+    response = client.chat(
         model=_get_model(),
-        prompt=prompt,
+        messages=[
+            {"role": "user", "content": f"Fix punctuation and capitalization in this text. Convert spoken symbols like 'forward slash' to '/'. Output ONLY the fixed text:\n\n{text}"},
+        ],
         options={
-            "temperature": 0.3,
-            "num_predict": 1024,
+            "temperature": 0.1,
+            "num_predict": 256,
         },
     )
 
-    return response["response"].strip()
+    return response["message"]["content"].strip()
 
 
 def check_ollama_available() -> bool:

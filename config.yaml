@@ -5,10 +5,10 @@
 hotkeys:
   # Voice-to-text: speak and it types (Control+Shift)
   transcribe: ["KEY_LEFTCTRL", "KEY_LEFTSHIFT"]
-  # Rewrite: select text first, then speak how you want it rewritten
-  rewrite: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_R"]
-  # Context reply: copy conversation to clipboard, then speak your intent
-  context_reply: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_C"]
+  # Rewrite: DISABLED - uncomment to enable
+  # rewrite: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_R"]
+  # Context reply: DISABLED - uncomment to enable
+  # context_reply: ["KEY_LEFTMETA", "KEY_LEFTSHIFT", "KEY_C"]
 
 # Whisper settings for speech-to-text
 whisper:
@@ -24,12 +24,42 @@ whisper:
 
 # Ollama settings for AI features
 ollama:
-  model: "llama3.2"
+  model: "qwen2.5:7b"
   base_url: "http://localhost:11434"
 
 # Writing style for AI responses
 # Options: formal, casual, very_casual
 style: "casual"
+
+# Custom vocabulary - terms that should be kept exactly as written
+# Useful for project names, technical terms, etc.
+vocabulary:
+  - "GameDevBuddy"
+  - "C++"
+  - "Unreal Engine"
+  - "UE5"
+  - "Vulkan"
+  - "Rust"
+  - "React"
+  - "useState"
+  - "useEffect"
+  - "async"
+  - "await"
+  - "impl"
+  - "struct"
+  - "enum"
+  - "Vec"
+  - "String"
+  - "Option"
+  - "Result"
+  - "Ok"
+  - "Err"
+  - "Some"
+  - "None"
+  # Add your own terms here
+
+# Programming context - helps the AI understand your domain
+programming_context: "C++, Rust, React, Unreal Engine game development"
 
 # Audio settings
 audio:

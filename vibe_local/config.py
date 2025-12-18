@@ -22,6 +22,8 @@ DEFAULT_CONFIG = {
         "base_url": "http://localhost:11434",
     },
     "style": "casual",
+    "vocabulary": [],
+    "programming_context": "",
     "audio": {
         "sample_rate": 16000,
         "channels": 1,
@@ -99,6 +101,14 @@ class Config:
     @property
     def audio(self) -> dict[str, Any]:
         return self._config["audio"]
+
+    @property
+    def vocabulary(self) -> list[str]:
+        return self._config.get("vocabulary", [])
+
+    @property
+    def programming_context(self) -> str:
+        return self._config.get("programming_context", "")
 
     def __getitem__(self, key: str) -> Any:
         return self._config[key]
