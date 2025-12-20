@@ -1,14 +1,16 @@
 """Qt-based system tray icon for KDE Wayland."""
+import subprocess
 import sys
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QTextEdit, QPushButton, QTabWidget,
-    QWidget, QComboBox, QFormLayout
+    QWidget, QComboBox, QFormLayout, QListWidget, QListWidgetItem, QSplitter
 )
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QObject
 
 from .config import get_config
+from .history import get_history
 
 
 class SettingsDialog(QDialog):
@@ -130,6 +132,138 @@ class SettingsDialog(QDialog):
         self.accept()
 
 
+class HistoryDialog(QDialog):
+    """Dialog showing transcription history."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Transcription History")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+
+        self._history = get_history()
+        self._setup_ui()
+        self._load_history()
+
+        # Listen for history changes
+        self._history.add_change_callback(self._load_history)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Splitter for list and detail
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Left side: list of entries
+        self._list = QListWidget()
+        self._list.currentRowChanged.connect(self._on_selection_changed)
+        splitter.addWidget(self._list)
+
+        # Right side: detail view
+        detail_widget = QWidget()
+        detail_layout = QVBoxLayout(detail_widget)
+
+        detail_layout.addWidget(QLabel("Final text:"))
+        self._final_text = QTextEdit()
+        self._final_text.setReadOnly(True)
+        detail_layout.addWidget(self._final_text)
+
+        detail_layout.addWidget(QLabel("Raw transcription:"))
+        self._raw_text = QTextEdit()
+        self._raw_text.setReadOnly(True)
+        self._raw_text.setMaximumHeight(80)
+        detail_layout.addWidget(self._raw_text)
+
+        splitter.addWidget(detail_widget)
+        splitter.setSizes([200, 400])
+
+        layout.addWidget(splitter)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+
+        copy_btn = QPushButton("Copy to Clipboard")
+        copy_btn.clicked.connect(self._copy_to_clipboard)
+        btn_layout.addWidget(copy_btn)
+
+        btn_layout.addStretch()
+
+        clear_btn = QPushButton("Clear History")
+        clear_btn.clicked.connect(self._clear_history)
+        btn_layout.addWidget(clear_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _load_history(self):
+        """Load history entries into the list."""
+        self._list.clear()
+        entries = self._history.get_entries()
+
+        for entry in entries:
+            # Format: time - preview of text
+            time_str = entry.timestamp.strftime("%H:%M:%S")
+            preview = entry.final_text[:40].replace("\n", " ")
+            if len(entry.final_text) > 40:
+                preview += "..."
+
+            action_icons = {
+                "transcribe": "",
+                "rewrite": "[R] ",
+                "context_reply": "[C] ",
+            }
+            icon = action_icons.get(entry.action, "")
+
+            item = QListWidgetItem(f"{time_str} - {icon}{preview}")
+            item.setData(Qt.ItemDataRole.UserRole, entry)
+            self._list.addItem(item)
+
+        # Select first item if available
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+
+    def _on_selection_changed(self, row: int):
+        """Handle selection change in the list."""
+        if row < 0:
+            self._final_text.clear()
+            self._raw_text.clear()
+            return
+
+        item = self._list.item(row)
+        entry = item.data(Qt.ItemDataRole.UserRole)
+
+        self._final_text.setPlainText(entry.final_text)
+        self._raw_text.setPlainText(entry.raw_text)
+
+    def _copy_to_clipboard(self):
+        """Copy the final text to clipboard."""
+        text = self._final_text.toPlainText()
+        if text:
+            try:
+                subprocess.run(
+                    ["wl-copy", text],
+                    check=True,
+                    timeout=2,
+                )
+            except Exception:
+                # Fallback to Qt clipboard
+                app = QApplication.instance()
+                if app:
+                    app.clipboard().setText(text)
+
+    def _clear_history(self):
+        """Clear all history."""
+        self._history.clear()
+
+    def closeEvent(self, event):
+        """Clean up when dialog closes."""
+        self._history.remove_change_callback(self._load_history)
+        super().closeEvent(event)
+
+
 class TraySignals(QObject):
     """Signals for communicating with the tray from other threads."""
     set_recording = pyqtSignal(bool)
@@ -198,6 +332,11 @@ class VibeTray:
         dialog = SettingsDialog()
         dialog.exec()
 
+    def _open_history(self):
+        """Open history dialog."""
+        dialog = HistoryDialog()
+        dialog.exec()
+
     def _quit(self):
         """Handle quit action."""
         if self._on_quit:
@@ -220,6 +359,8 @@ class VibeTray:
         menu.addSeparator()
         menu.addAction("Ctrl+Shift: Voice to text").setEnabled(False)
         menu.addSeparator()
+        history_action = menu.addAction("History...")
+        history_action.triggered.connect(self._open_history)
         settings_action = menu.addAction("Settings...")
         settings_action.triggered.connect(self._open_settings)
         menu.addSeparator()

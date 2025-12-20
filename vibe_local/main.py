@@ -7,6 +7,7 @@ import threading
 
 from .audio import PushToTalkRecorder
 from .config import get_config, init_config
+from .history import get_history
 from .hotkeys import HotkeyAction, HotkeyEvent, HotkeyListener, check_input_permissions, get_hotkey_help
 from .input_sim import check_dependencies, get_clipboard, get_selection, type_text
 from .llm import check_ollama_available, context_reply, ensure_model_available, improve_transcription, rewrite
@@ -95,11 +96,13 @@ class VibeLocal:
                 # Clean up transcription with AI
                 print(">>> Cleaning up with AI...")
                 self._notify("Cleaning up...")
+                raw_text = text
                 text = improve_transcription(text)
                 print(f">>> Clean: {text}")
                 print(">>> Typing...")
                 self._notify(f"Typing: {text[:50]}...")
                 type_text(text)
+                get_history().add(raw_text, text, "transcribe")
                 print(">>> Done!")
 
             elif action == HotkeyAction.REWRITE:
@@ -117,6 +120,7 @@ class VibeLocal:
                 rewritten = rewrite(selection, text)
                 self._notify(f"Typing: {rewritten[:50]}...")
                 type_text(rewritten)
+                get_history().add(text, rewritten, "rewrite")
 
             elif action == HotkeyAction.CONTEXT_REPLY:
                 # Get clipboard context and generate reply
@@ -130,6 +134,7 @@ class VibeLocal:
                 reply = context_reply(context, text)
                 self._notify(f"Typing: {reply[:50]}...")
                 type_text(reply)
+                get_history().add(text, reply, "context_reply")
 
         except Exception as e:
             self._notify(f"Error: {str(e)[:50]}")

@@ -41,6 +41,10 @@ def transcribe(audio: np.ndarray, sample_rate: int = 16000) -> str:
     if audio.dtype != np.float32:
         audio = audio.astype(np.float32)
 
+    # Get vocabulary for hotwords
+    vocabulary = get_config().vocabulary
+    hotwords = " ".join(vocabulary) if vocabulary else None
+
     # Transcribe
     segments, info = model.transcribe(
         audio,
@@ -50,6 +54,7 @@ def transcribe(audio: np.ndarray, sample_rate: int = 16000) -> str:
         vad_parameters=dict(
             min_silence_duration_ms=500,
         ),
+        hotwords=hotwords,
     )
 
     # Collect all segments
@@ -73,11 +78,16 @@ def transcribe_file(audio_path: str) -> str:
     model = get_model()
     config = get_config().whisper
 
+    # Get vocabulary for hotwords
+    vocabulary = get_config().vocabulary
+    hotwords = " ".join(vocabulary) if vocabulary else None
+
     segments, info = model.transcribe(
         audio_path,
         language=config["language"] if config["language"] != "auto" else None,
         beam_size=5,
         vad_filter=True,
+        hotwords=hotwords,
     )
 
     text_parts = []
