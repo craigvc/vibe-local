@@ -62,10 +62,9 @@ def type_text(text: str, interval: float = 0.01) -> bool:
 
     system = platform.system()
 
-    # On Linux, prefer ydotool for Wayland compatibility
+    # On Linux, use ydotool for Wayland compatibility
     if system == "Linux" and _check_tool("ydotool"):
         try:
-            # ydotool works on KDE Wayland (pynput/wtype don't)
             key_delay = int(interval * 1000)  # Convert to milliseconds
             result = subprocess.run(
                 ["ydotool", "type", "--key-delay", str(key_delay), "--", text],
@@ -80,7 +79,6 @@ def type_text(text: str, interval: float = 0.01) -> bool:
             print("ydotool timed out")
         except Exception as e:
             print(f"ydotool error: {e}")
-        # Fall through to pynput fallback
 
     # Use pynput for Windows, macOS, or Linux fallback
     try:
