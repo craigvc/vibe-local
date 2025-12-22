@@ -1,10 +1,9 @@
-"""Cross-platform hotkey detection using pynput."""
-import threading
+"""Cross-platform hotkey detection - evdev on Linux, pynput on Windows/macOS."""
+import asyncio
+import platform
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable
-
-from pynput import keyboard
 
 from .config import get_config
 
@@ -23,167 +22,288 @@ class HotkeyEvent:
     pressed: bool  # True = pressed, False = released
 
 
-# Map config key names to pynput keys
-KEY_MAP = {
-    "KEY_LEFTCTRL": keyboard.Key.ctrl_l,
-    "KEY_RIGHTCTRL": keyboard.Key.ctrl_r,
-    "KEY_LEFTSHIFT": keyboard.Key.shift_l,
-    "KEY_RIGHTSHIFT": keyboard.Key.shift_r,
-    "KEY_LEFTALT": keyboard.Key.alt_l,
-    "KEY_RIGHTALT": keyboard.Key.alt_r,
-    "KEY_LEFTMETA": keyboard.Key.cmd,  # Super/Windows/Command key
-    "KEY_RIGHTMETA": keyboard.Key.cmd_r,
-}
+# Detect platform
+_SYSTEM = platform.system()
 
 
-class HotkeyListener:
-    """
-    Cross-platform hotkey listener using pynput.
+if _SYSTEM == "Linux":
+    # Use evdev on Linux - stable on Wayland/KDE
+    import evdev
+    from evdev import ecodes
 
-    Works on Windows, macOS, and Linux (X11 and Wayland with some limitations).
-    """
+    class HotkeyListener:
+        """
+        Linux hotkey listener using evdev.
 
-    def __init__(self):
-        self._config = get_config().hotkeys
-        self._pressed_keys: set = set()
-        self._callbacks: list[Callable[[HotkeyEvent], None]] = []
-        self._listener: keyboard.Listener | None = None
-        self._active_hotkey: HotkeyAction | None = None
+        Directly reads from input devices - works reliably on Wayland.
+        """
 
-        # Parse hotkey configs
-        self._hotkeys = self._parse_hotkeys()
+        def __init__(self):
+            self._config = get_config().hotkeys
+            self._pressed_keys: set[int] = set()
+            self._callbacks: list[Callable[[HotkeyEvent], None]] = []
+            self._running = False
+            self._active_hotkey: HotkeyAction | None = None
+            self._devices: list[evdev.InputDevice] = []
 
-    def _parse_hotkeys(self) -> dict[HotkeyAction, set]:
-        """Convert config key names to pynput keys."""
-        result = {}
+            # Parse hotkey configs (keep as evdev key names)
+            self._hotkeys = self._parse_hotkeys()
 
-        action_map = {
-            "transcribe": HotkeyAction.TRANSCRIBE,
-            "rewrite": HotkeyAction.REWRITE,
-            "context_reply": HotkeyAction.CONTEXT_REPLY,
-        }
+        def _parse_hotkeys(self) -> dict[HotkeyAction, set[int]]:
+            """Convert config key names to evdev key codes."""
+            result = {}
 
-        for name, action in action_map.items():
-            if name in self._config:
-                keys = set()
-                for key_name in self._config[name]:
-                    if key_name in KEY_MAP:
-                        keys.add(KEY_MAP[key_name])
-                    elif key_name.startswith("KEY_"):
-                        # Try to map single character keys like KEY_V
-                        char = key_name[4:].lower()
-                        if len(char) == 1:
-                            keys.add(keyboard.KeyCode.from_char(char))
+            action_map = {
+                "transcribe": HotkeyAction.TRANSCRIBE,
+                "rewrite": HotkeyAction.REWRITE,
+                "context_reply": HotkeyAction.CONTEXT_REPLY,
+            }
+
+            for name, action in action_map.items():
+                if name in self._config:
+                    keys = set()
+                    for key_name in self._config[name]:
+                        if hasattr(ecodes, key_name):
+                            keys.add(getattr(ecodes, key_name))
                         else:
                             print(f"Warning: Unknown key {key_name}")
-                    else:
-                        print(f"Warning: Unknown key {key_name}")
-                if keys:
-                    result[action] = keys
+                    if keys:
+                        result[action] = keys
 
-        return result
+            return result
 
-    def _normalize_key(self, key) -> keyboard.Key | keyboard.KeyCode | None:
-        """Normalize a key to a consistent format."""
-        # Handle special keys
-        if isinstance(key, keyboard.Key):
-            # Normalize left/right variants for modifiers
-            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-                return keyboard.Key.ctrl_l
-            elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r):
-                return keyboard.Key.shift_l
-            elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
-                return keyboard.Key.alt_l
-            elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r):
-                return keyboard.Key.cmd
-            return key
-        elif isinstance(key, keyboard.KeyCode):
-            return key
-        return None
+        def _find_keyboard_devices(self) -> list[evdev.InputDevice]:
+            """Find all keyboard input devices."""
+            devices = []
+            for path in evdev.list_devices():
+                try:
+                    device = evdev.InputDevice(path)
+                    caps = device.capabilities()
+                    # Check if device has key events and looks like a keyboard
+                    if ecodes.EV_KEY in caps:
+                        key_caps = caps[ecodes.EV_KEY]
+                        # Has letter keys = keyboard
+                        if ecodes.KEY_A in key_caps and ecodes.KEY_Z in key_caps:
+                            devices.append(device)
+                except (PermissionError, OSError):
+                    continue
+            return devices
 
-    def add_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
-        """Add a callback to be called when a hotkey is triggered."""
-        self._callbacks.append(callback)
+        def add_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
+            self._callbacks.append(callback)
 
-    def remove_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
-        """Remove a callback."""
-        if callback in self._callbacks:
-            self._callbacks.remove(callback)
+        def remove_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
+            if callback in self._callbacks:
+                self._callbacks.remove(callback)
 
-    def _emit(self, event: HotkeyEvent) -> None:
-        """Emit an event to all callbacks."""
-        for callback in self._callbacks:
+        def _emit(self, event: HotkeyEvent) -> None:
+            for callback in self._callbacks:
+                try:
+                    callback(event)
+                except Exception as e:
+                    print(f"Error in hotkey callback: {e}")
+
+        def _check_hotkeys(self, is_press: bool) -> None:
+            for action, keys in self._hotkeys.items():
+                if keys.issubset(self._pressed_keys):
+                    if is_press and self._active_hotkey is None:
+                        self._active_hotkey = action
+                        self._emit(HotkeyEvent(action=action, pressed=True))
+                elif action == self._active_hotkey and not is_press:
+                    self._active_hotkey = None
+                    self._emit(HotkeyEvent(action=action, pressed=False))
+
+        async def _read_device(self, device: evdev.InputDevice) -> None:
+            """Read events from a single device."""
             try:
-                callback(event)
-            except Exception as e:
-                print(f"Error in hotkey callback: {e}")
+                async for event in device.async_read_loop():
+                    if not self._running:
+                        break
+                    if event.type == ecodes.EV_KEY:
+                        if event.value == 1:  # Key press
+                            self._pressed_keys.add(event.code)
+                            self._check_hotkeys(is_press=True)
+                        elif event.value == 0:  # Key release
+                            self._pressed_keys.discard(event.code)
+                            self._check_hotkeys(is_press=False)
+            except (OSError, IOError):
+                pass  # Device disconnected
 
-    def _check_hotkeys(self, is_press: bool) -> None:
-        """Check if any hotkey combination is active."""
-        for action, keys in self._hotkeys.items():
-            if keys.issubset(self._pressed_keys):
-                if is_press and self._active_hotkey is None:
-                    # Hotkey pressed
-                    self._active_hotkey = action
-                    self._emit(HotkeyEvent(action=action, pressed=True))
-            elif action == self._active_hotkey and not is_press:
-                # Hotkey released
-                self._active_hotkey = None
-                self._emit(HotkeyEvent(action=action, pressed=False))
+        async def start(self) -> None:
+            """Start listening for hotkeys."""
+            print("Starting hotkey listener (evdev)...")
 
-    def _on_press(self, key) -> None:
-        """Handle key press events."""
-        normalized = self._normalize_key(key)
-        if normalized:
-            self._pressed_keys.add(normalized)
-            self._check_hotkeys(is_press=True)
+            self._devices = self._find_keyboard_devices()
+            if not self._devices:
+                print("Warning: No keyboard devices found!")
+                return
 
-    def _on_release(self, key) -> None:
-        """Handle key release events."""
-        normalized = self._normalize_key(key)
-        if normalized:
-            self._pressed_keys.discard(normalized)
-            self._check_hotkeys(is_press=False)
+            print(f"Found {len(self._devices)} keyboard device(s)")
+            self._running = True
 
-    async def start(self) -> None:
-        """Start listening for hotkeys."""
-        print("Starting hotkey listener...")
+            # Read from all devices concurrently
+            tasks = [self._read_device(dev) for dev in self._devices]
+            await asyncio.gather(*tasks)
 
-        # Start the listener in a separate thread
-        self._listener = keyboard.Listener(
-            on_press=self._on_press,
-            on_release=self._on_release
-        )
-        self._listener.start()
-
-        print("Hotkey listener started")
-
-        # Keep running until stopped
-        while self._listener and self._listener.is_alive():
-            await asyncio.sleep(0.1)
-
-    def stop(self) -> None:
-        """Stop listening for hotkeys."""
-        if self._listener:
-            self._listener.stop()
-            self._listener = None
+        def stop(self) -> None:
+            self._running = False
+            for device in self._devices:
+                try:
+                    device.close()
+                except:
+                    pass
+            self._devices = []
 
 
-def check_input_permissions() -> bool:
-    """Check if we have permission to listen for input events."""
-    # pynput handles permissions internally
-    # On Linux, may need to be run as root or with input group for some backends
-    # On macOS, needs accessibility permissions
-    # On Windows, generally works without special permissions
-    try:
-        # Try to create a listener briefly
-        test_listener = keyboard.Listener(on_press=lambda k: None)
-        test_listener.start()
-        test_listener.stop()
-        return True
-    except Exception as e:
-        print(f"Permission check failed: {e}")
-        return False
+    def check_input_permissions() -> bool:
+        """Check if we have permission to read input devices."""
+        try:
+            devices = evdev.list_devices()
+            if not devices:
+                return False
+            # Try to open at least one device
+            for path in devices:
+                try:
+                    dev = evdev.InputDevice(path)
+                    dev.close()
+                    return True
+                except PermissionError:
+                    continue
+            return False
+        except Exception as e:
+            print(f"Permission check failed: {e}")
+            return False
+
+else:
+    # Use pynput on Windows/macOS
+    from pynput import keyboard
+
+    # Map config key names to pynput keys
+    KEY_MAP = {
+        "KEY_LEFTCTRL": keyboard.Key.ctrl_l,
+        "KEY_RIGHTCTRL": keyboard.Key.ctrl_r,
+        "KEY_LEFTSHIFT": keyboard.Key.shift_l,
+        "KEY_RIGHTSHIFT": keyboard.Key.shift_r,
+        "KEY_LEFTALT": keyboard.Key.alt_l,
+        "KEY_RIGHTALT": keyboard.Key.alt_r,
+        "KEY_LEFTMETA": keyboard.Key.cmd,
+        "KEY_RIGHTMETA": keyboard.Key.cmd_r,
+    }
+
+    class HotkeyListener:
+        """
+        Windows/macOS hotkey listener using pynput.
+        """
+
+        def __init__(self):
+            self._config = get_config().hotkeys
+            self._pressed_keys: set = set()
+            self._callbacks: list[Callable[[HotkeyEvent], None]] = []
+            self._listener: keyboard.Listener | None = None
+            self._active_hotkey: HotkeyAction | None = None
+            self._hotkeys = self._parse_hotkeys()
+
+        def _parse_hotkeys(self) -> dict[HotkeyAction, set]:
+            result = {}
+            action_map = {
+                "transcribe": HotkeyAction.TRANSCRIBE,
+                "rewrite": HotkeyAction.REWRITE,
+                "context_reply": HotkeyAction.CONTEXT_REPLY,
+            }
+
+            for name, action in action_map.items():
+                if name in self._config:
+                    keys = set()
+                    for key_name in self._config[name]:
+                        if key_name in KEY_MAP:
+                            keys.add(KEY_MAP[key_name])
+                        elif key_name.startswith("KEY_"):
+                            char = key_name[4:].lower()
+                            if len(char) == 1:
+                                keys.add(keyboard.KeyCode.from_char(char))
+                    if keys:
+                        result[action] = keys
+
+            return result
+
+        def _normalize_key(self, key):
+            if isinstance(key, keyboard.Key):
+                if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                    return keyboard.Key.ctrl_l
+                elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r):
+                    return keyboard.Key.shift_l
+                elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
+                    return keyboard.Key.alt_l
+                elif key in (keyboard.Key.cmd, keyboard.Key.cmd_r):
+                    return keyboard.Key.cmd
+                return key
+            elif isinstance(key, keyboard.KeyCode):
+                return key
+            return None
+
+        def add_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
+            self._callbacks.append(callback)
+
+        def remove_callback(self, callback: Callable[[HotkeyEvent], None]) -> None:
+            if callback in self._callbacks:
+                self._callbacks.remove(callback)
+
+        def _emit(self, event: HotkeyEvent) -> None:
+            for callback in self._callbacks:
+                try:
+                    callback(event)
+                except Exception as e:
+                    print(f"Error in hotkey callback: {e}")
+
+        def _check_hotkeys(self, is_press: bool) -> None:
+            for action, keys in self._hotkeys.items():
+                if keys.issubset(self._pressed_keys):
+                    if is_press and self._active_hotkey is None:
+                        self._active_hotkey = action
+                        self._emit(HotkeyEvent(action=action, pressed=True))
+                elif action == self._active_hotkey and not is_press:
+                    self._active_hotkey = None
+                    self._emit(HotkeyEvent(action=action, pressed=False))
+
+        def _on_press(self, key) -> None:
+            normalized = self._normalize_key(key)
+            if normalized:
+                self._pressed_keys.add(normalized)
+                self._check_hotkeys(is_press=True)
+
+        def _on_release(self, key) -> None:
+            normalized = self._normalize_key(key)
+            if normalized:
+                self._pressed_keys.discard(normalized)
+                self._check_hotkeys(is_press=False)
+
+        async def start(self) -> None:
+            print("Starting hotkey listener (pynput)...")
+            self._listener = keyboard.Listener(
+                on_press=self._on_press,
+                on_release=self._on_release
+            )
+            self._listener.start()
+            print("Hotkey listener started")
+
+            while self._listener and self._listener.is_alive():
+                await asyncio.sleep(0.1)
+
+        def stop(self) -> None:
+            if self._listener:
+                self._listener.stop()
+                self._listener = None
+
+
+    def check_input_permissions() -> bool:
+        try:
+            test_listener = keyboard.Listener(on_press=lambda k: None)
+            test_listener.start()
+            test_listener.stop()
+            return True
+        except Exception as e:
+            print(f"Permission check failed: {e}")
+            return False
 
 
 def get_hotkey_help() -> str:
@@ -191,7 +311,6 @@ def get_hotkey_help() -> str:
     config = get_config().hotkeys
 
     def format_keys(keys: list[str]) -> str:
-        # Convert evdev names to readable names
         name_map = {
             "KEY_LEFTMETA": "Super",
             "KEY_RIGHTMETA": "Super",
@@ -219,7 +338,3 @@ def get_hotkey_help() -> str:
         f"  Context reply: {format_keys(config['context_reply'])}",
     ]
     return "\n".join(lines)
-
-
-# Need asyncio for the async start method
-import asyncio
